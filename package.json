@@ -17,6 +17,7 @@
     "indexhtmlify": "^2.0.1"
   },
   "dependencies": {
+    "@types/dat.gui": "^0.7.6",
     "dat.gui": "^0.7.7"
   }
 }
