@@ -7,8 +7,7 @@
   "main": "main.js",
   "scripts": {
     "build": "browserify --debug -p tsify main.ts -o bundle.js",
-    "watch2": "budo main.ts -d --live --force-default-index -- -p tsify",
-    "watch": "budo main.ts -d --live -- -p tsify"
+    "watch": "budo main.ts -d --live --serve bundle.js -- -p [ tsify --project tsconfig.json ]"
   },
   "devDependencies": {
     "browserify": "^17.0.0",
