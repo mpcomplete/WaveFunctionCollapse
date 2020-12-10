@@ -20,7 +20,7 @@ window.onload = function() {
 function initTiles() {
   let img = new Image();
   img.crossOrigin = 'anonymous';
-  img.src = "tiles.png";
+  img.src = "tiles2.png";
 
   img.onload = function() {
     console.log("image done");
@@ -134,6 +134,11 @@ function* rectRange([w, h]: Size) {
 class Tile {
   topLeftPixel(): Color { return this._pixels[0]; }
   getPixel([x, y]: Point): Color { return this._pixels[x + y * config.tileSize]; }
+  get mapKey(): string {
+    if (!this._mapKey)
+      this._mapKey = this._pixels.join(",");
+    return this._mapKey;
+  }
 
   static fromImageData(imageData: MyImageData, [ix, iy]: Point): Tile {
     let tile = new Tile;
@@ -143,28 +148,46 @@ class Tile {
   }
 
   private _pixels: Color[] = [];
+  private _mapKey: string;
+}
+
+class TileCountMap extends Map<string, {tile: Tile, count: number}> {
+  addTile(tile: Tile) {
+    let value = this.get(tile.mapKey) || {tile: tile, count: 0};
+    value.count++;
+    this.set(tile.mapKey, value);
+  }
 }
 
 function parseImage(imageData: MyImageData) {
-  let tiles: Tile[] = [];
+  let tileMap = new TileCountMap();
   for (let p of rectRange([imageData.width, imageData.height])) {
     let tile = Tile.fromImageData(imageData, p);
-    tiles.push(tile);
+    tileMap.addTile(tile);
   }
+
+  let tiles: Tile[] = [];
+  let counts: number[] = [];
+  for (let {tile, count} of tileMap.values()) {
+    tiles.push(tile);
+    counts.push(count);
+  }
+  // let frequencyHints = new FrequencyHints(tiles, counts);
 
   displayTileset(tiles);
 }
 
 function displayTileset(tiles: Tile[]) {
   let across = Math.floor(Math.sqrt(tiles.length));
-  let down = Math.floor(tiles.length / across);
-  console.log(tiles.length, "=",config.tileSize, across, down);
+  let down = Math.ceil(tiles.length / across);
   let imageData = new ImageData((config.tileSize+1)*across - 1, (config.tileSize+1)*down - 1) as MyImageData;
 
   for (let [i, j] of rectRange([across, down])) {
-    let tile = tiles[i + j*across];
+    let tile = i + j*across;
+    if (tile >= tiles.length)
+      break;
     for (let [x, y] of rectRange([config.tileSize, config.tileSize]))
-      imageData.set([(config.tileSize+1)*i + x, (config.tileSize+1)*j + y], tile.getPixel([x,y]));
+      imageData.set([(config.tileSize+1)*i + x, (config.tileSize+1)*j + y], tiles[tile].getPixel([x,y]));
   }
 
   // Blit to an offscreen canvas first, so we can scale it up when drawing it for real.
@@ -179,5 +202,6 @@ function displayTileset(tiles: Tile[]) {
   let context = canvas.getContext('2d');
   if (!context) return;
   context.imageSmoothingEnabled = false;
+  context.clearRect(0, 0, canvas.width, canvas.height);
   context.drawImage(buffer, 0, 0, canvas.width, canvas.height);
 }
