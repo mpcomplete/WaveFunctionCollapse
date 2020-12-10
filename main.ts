@@ -8,11 +8,10 @@ window.onload = function() {
     config[name] = initial;
     return gui.add(config, name, min, max).name(readableName(name));
   }
-  addConfig("includeRotatedAndFlipped", false);
+  addConfig("includeRotatedAndFlipped", false).onFinishChange(initTiles);
   addConfig("tileSize", 3, 2, 10).step(1).onFinishChange(initTiles);
   addConfig("outputWidth", 20, 5, 1000).step(5);
   addConfig("outputHeight", 20, 5, 1000).step(5);
-  console.log("config done");
 
   initTiles();
 };
@@ -20,10 +19,9 @@ window.onload = function() {
 function initTiles() {
   let img = new Image();
   img.crossOrigin = 'anonymous';
-  img.src = "tiles2.png";
+  img.src = "tiles.png";
 
   img.onload = function() {
-    console.log("image done");
     // Update the input tile display.
     {
       let canvas = $("input") as HTMLCanvasElement;
@@ -131,6 +129,10 @@ function* rectRange([w, h]: Size) {
 //   ctx.putImageData(imageData, 0, 0);
 // };
 
+function pointToIndex([x, y]: Point, width: number): number {
+  return x + y*width;
+}
+
 class Tile {
   topLeftPixel(): Color { return this._pixels[0]; }
   getPixel([x, y]: Point): Color { return this._pixels[x + y * config.tileSize]; }
@@ -140,10 +142,27 @@ class Tile {
     return this._mapKey;
   }
 
+  // Returns the Tile found at the given coord in the image, wrapping coordinates.
   static fromImageData(imageData: MyImageData, [ix, iy]: Point): Tile {
     let tile = new Tile;
     for (let [tx, ty] of rectRange([config.tileSize, config.tileSize]))
-      tile._pixels[tx + ty * config.tileSize] = imageData.get([(ix + tx) % imageData.width, (iy + ty) % imageData.height]);
+      tile._pixels[pointToIndex([tx, ty], config.tileSize)] = imageData.get([(ix + tx) % imageData.width, (iy + ty) % imageData.height]);
+    return tile;
+  }
+  // Returns a copy of `orig` rotated 90 degrees clockwise.
+  static rotated(orig: Tile): Tile {
+    // (x,y) => (w-y,x)
+    let tile = new Tile;
+    for (let [x, y] of rectRange([config.tileSize, config.tileSize]))
+      tile._pixels[pointToIndex([config.tileSize - 1 - y, x], config.tileSize)] = orig._pixels[pointToIndex([x, y], config.tileSize)];
+    return tile;
+  }
+  // Returns a copy of `orig` flipped vertically.
+  static flipped(orig: Tile): Tile {
+    // (x,y) => (x,w-y)
+    let tile = new Tile;
+    for (let [x, y] of rectRange([config.tileSize, config.tileSize]))
+      tile._pixels[pointToIndex([x, config.tileSize - 1 - y], config.tileSize)] = orig._pixels[pointToIndex([x, y], config.tileSize)];
     return tile;
   }
 
@@ -152,10 +171,11 @@ class Tile {
 }
 
 class TileCountMap extends Map<string, {tile: Tile, count: number}> {
-  addTile(tile: Tile) {
+  addTile(tile: Tile): number {
     let value = this.get(tile.mapKey) || {tile: tile, count: 0};
     value.count++;
     this.set(tile.mapKey, value);
+    return value.count;
   }
 }
 
@@ -163,7 +183,18 @@ function parseImage(imageData: MyImageData) {
   let tileMap = new TileCountMap();
   for (let p of rectRange([imageData.width, imageData.height])) {
     let tile = Tile.fromImageData(imageData, p);
-    tileMap.addTile(tile);
+    let count = tileMap.addTile(tile);
+    if (config.includeRotatedAndFlipped) {
+      // Add the other 3 rotations, and the 4 rotations of the flipped case (for 0, 90, 180, and 270 degrees)
+      let subtile = tile;
+      tileMap.addTile(subtile = Tile.rotated(subtile));
+      tileMap.addTile(subtile = Tile.rotated(subtile));
+      tileMap.addTile(subtile = Tile.rotated(subtile));
+      tileMap.addTile(subtile = Tile.flipped(tile));
+      tileMap.addTile(subtile = Tile.rotated(subtile));
+      tileMap.addTile(subtile = Tile.rotated(subtile));
+      tileMap.addTile(subtile = Tile.rotated(subtile));
+    }
   }
 
   let tiles: Tile[] = [];
