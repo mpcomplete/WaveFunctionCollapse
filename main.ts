@@ -115,20 +115,6 @@ function* rectRange([w, h]: Size) {
   }
 }
 
-// var grayscale = function () {
-//   ctx.drawImage(img, 0, 0);
-//   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height) as MyImageData;
-//   const data = imageData.data;
-//   for (let y = 0; y < imageData.height; y++) {
-//     for (let x = 0; x < imageData.width; x++) {
-//       let c = imageData.get([x, y]);
-//       let avg = (c[0] + c[1] + c[2]) / 3;
-//       imageData.set([x, y], [avg, avg, avg, 255]);
-//     }
-//   }
-//   ctx.putImageData(imageData, 0, 0);
-// };
-
 function pointToIndex([x, y]: Point, width: number): number {
   return x + y*width;
 }
