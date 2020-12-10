@@ -43,6 +43,40 @@ function initTiles() {
   };
 }
 
+// Shameless hack to extend ImageData with concise pixel accessors.
+interface MyImageData extends ImageData {
+  get([x, y]: Point): Color;
+  set([x, y]: Point, c: Color): void;
+}
+ImageData.prototype["get"] = function([x, y]: Point): Color {
+  let r = 4 * (y * this.width + x);
+  return (this.data[r] << 24) | (this.data[r+1] << 16) | (this.data[r+2] << 8) | (this.data[r+3]);
+}
+ImageData.prototype["set"] = function([x, y]: Point, color: Color): void {
+  let r = 4 * (y * this.width + x);
+  this.data[r+0] = (color >>> 24) & 0xff;
+  this.data[r+1] = (color >>> 16) & 0xff;
+  this.data[r+2] = (color >>> 8) & 0xff;
+  this.data[r+3] = (color) & 0xff;
+}
+
+// Convenience function for iterating over rectangular regions.
+function* rectRange([w, h]: Size) {
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      yield <Point>[x,y]
+    }
+  }
+}
+
+// Helper for flattening a 2d coord to an index (row-major order).
+function pointToIndex([x, y]: Point, width: number): number {
+  return x + y*width;
+}
+
+// Full jquery emulation.
+const $ = (id: string) => document.getElementById(id);
+
 // How we identify a tile - just its index into the list of all tiles.
 type TileIndex = number;
 
@@ -66,8 +100,6 @@ type Size = [number, number];
 
 // Mapping of TileIndex -> color of the top-left pixel of that tile.
 type TileColorMapping = Color[];
-
-const $ = (id: string) => document.getElementById(id);
 
 // Manages relative frequencies of all the tiles. The higher a tile's frequency,
 // the more likely that tile will appear in the output.
@@ -94,18 +126,14 @@ class FrequencyHints {
   private readonly _sumWeightTimesLogWeight: number = 0;
 }
 
-type AdjacencyRule = [TileIndex, TileIndex, Direction];
-
 // Manages rules for which tiles are allowed to be adjacent to which other tiles, in a given direction.
 class AdjacencyRules {
   constructor(tiles: Tile[]) {
     for (let i = 0; i < tiles.length; i++) {
-      for (let j = i; j < tiles.length; j++) {
+      for (let j = 0; j < tiles.length; j++) {
         for (let dir of Direction.items) {
-          if (AdjacencyRules._isCompatible(tiles[i], tiles[j], dir)) {
-            this._allowed.push([i, j, dir]);
-            this._allowed.push([j, i, Direction.toOpposite[dir]]);
-          }
+          if (AdjacencyRules._isCompatible(tiles[i], tiles[j], dir))
+            this._allow(i, j, dir);
         }
       }
     }
@@ -113,6 +141,11 @@ class AdjacencyRules {
   // Returns true if we can place tile `to` in the direction `dir` from `from`.
   isAllowed(from: TileIndex, to: TileIndex, dir: Direction): boolean {
     return true;
+  }
+  // Returns an iterator of all the tiles which can be placed one space in direction `dir`
+  // from tile `from`.
+  *allowedTiles(from: TileIndex, dir: Direction) {
+    yield from;
   }
 
   private static _isCompatible(a: Tile, b: Tile, dir: Direction): boolean {
@@ -126,35 +159,13 @@ class AdjacencyRules {
     }
     return true;
   }
-  private readonly _allowed: AdjacencyRule[] = [];
-}
-
-interface MyImageData extends ImageData {
-  get([x, y]: Point): Color;
-  set([x, y]: Point, c: Color): void;
-}
-ImageData.prototype["get"] = function([x, y]: Point): Color {
-  let r = 4 * (y * this.width + x);
-  return (this.data[r] << 24) | (this.data[r+1] << 16) | (this.data[r+2] << 8) | (this.data[r+3]);
-}
-ImageData.prototype["set"] = function([x, y]: Point, color: Color): void {
-  let r = 4 * (y * this.width + x);
-  this.data[r+0] = (color >>> 24) & 0xff;
-  this.data[r+1] = (color >>> 16) & 0xff;
-  this.data[r+2] = (color >>> 8) & 0xff;
-  this.data[r+3] = (color) & 0xff;
-}
-
-function* rectRange([w, h]: Size) {
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      yield <Point>[x,y]
-    }
+  private _allow(from: TileIndex, to: TileIndex, dir: Direction): void {
+    if (!this._allowed[from]) this._allowed[from] = [];
+    if (!this._allowed[from][dir]) this._allowed[from][dir] = [];
+    this._allowed[from][dir].push(to);
   }
-}
 
-function pointToIndex([x, y]: Point, width: number): number {
-  return x + y*width;
+  private readonly _allowed: Array<Array<Array<TileIndex>>> = [];
 }
 
 class Tile {
