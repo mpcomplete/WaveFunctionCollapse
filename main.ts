@@ -36,13 +36,54 @@ img.onload = function() {
     let context = canvas.getContext('2d');
     if (!context) return;
     context.drawImage(img, 0, 0);
-    let imageData = context.getImageData(0, 0, img.width, img.height);
-    // parseImage(imageData);
+    let imageData = context.getImageData(0, 0, img.width, img.height) as MyImageData;
+    parseImage(imageData);
   }
 };
 
+// How we identify a tile - just its index into the list of all tiles.
+type TileIndex = number;
+
+// A number giving the relative frequency of a tile.
+type FrequencyWeight = number;
+
+// Cardinal directions.
+enum Direction {Up, Right, Down, Left};
+
+// An RGBA color. Range is 0-255.
 type Color = [number, number, number, number];
+
+// An x,y tuple.
 type Point = [number, number];
+
+// Mapping of TileIndex -> color of the top-left pixel of that tile.
+type TileColorMapping = Color[];
+
+// Manages relative frequencies of all the tiles. The higher a tile's frequency,
+// the more likely that tile will appear in the output.
+class FrequencyHints {
+  readonly _tileWeights: FrequencyWeight[];
+  readonly _sumWeight: FrequencyWeight;
+  readonly _sumWeightTimesLogWeight: number;
+
+  // w[n] - the relative frequency of the given tile. This is simply the number of
+  // times it appears in the source image.
+  weightForTile(index: TileIndex): FrequencyWeight {
+    return this._tileWeights[index];
+  }
+  // Cache of sum(w[n]), used in entropy calculations.
+  get sumWeight() { return this._sumWeight; }
+  // Cache of sum(w[n]*log(w[n])), used in entropy calculations.
+  get sumWeightTimesLogWeight() { return this._sumWeight; }
+}
+
+// Manages rules for which tiles are allowed to be adjacent to which other tiles, in a given direction.
+class AdjacencyRules {
+  // Returns true if we can place tile `to` in the direction `dir` from `from`.
+  isAllowed(from: TileIndex, to: TileIndex, dir: Direction): boolean {
+    return true;
+  }
+}
 
 interface MyImageData extends ImageData {
   get([x, y]: Point): Color;
@@ -71,3 +112,6 @@ ImageData.prototype["set"] = function([x, y]: Point, color: Color): void {
 //   }
 //   ctx.putImageData(imageData, 0, 0);
 // };
+
+function parseImage(imageData: MyImageData) {
+}
