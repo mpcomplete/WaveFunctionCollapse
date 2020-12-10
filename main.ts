@@ -50,7 +50,12 @@ type TileIndex = number;
 type FrequencyWeight = number;
 
 // Cardinal directions.
-enum Direction {Up, Right, Down, Left};
+enum Direction { Up, Right, Down, Left };
+namespace Direction {
+  export const items: Direction[] = [Direction.Up, Direction.Right, Direction.Down, Direction.Left];
+  export const toOpposite: Direction[] = [Direction.Down, Direction.Left, Direction.Up, Direction.Right];
+  export const toOffset: Size[] = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+}
 
 // A 32-bit RGBA color. Format is 0xRRGGBBAA.
 type Color = number;
@@ -67,6 +72,13 @@ const $ = (id: string) => document.getElementById(id);
 // Manages relative frequencies of all the tiles. The higher a tile's frequency,
 // the more likely that tile will appear in the output.
 class FrequencyHints {
+  constructor(counts: number[]) {
+    this._tileWeights = counts;
+    for (let i = 0; i < counts.length; i++) {
+      this._sumWeight += counts[i];
+      this._sumWeightTimesLogWeight += counts[i] * Math.log2(counts[i]);
+    }
+  }
   // w[n] - the relative frequency of the given tile. This is simply the number of
   // times it appears in the source image.
   weightForTile(index: TileIndex): FrequencyWeight {
@@ -77,17 +89,44 @@ class FrequencyHints {
   // Cache of sum(w[n]*log(w[n])), used in entropy calculations.
   get sumWeightTimesLogWeight() { return this._sumWeightTimesLogWeight; }
 
-  private readonly _tileWeights: FrequencyWeight[];
-  private readonly _sumWeight: FrequencyWeight;
-  private readonly _sumWeightTimesLogWeight: number;
+  private readonly _tileWeights: FrequencyWeight[] = [];
+  private readonly _sumWeight: FrequencyWeight = 0;
+  private readonly _sumWeightTimesLogWeight: number = 0;
 }
+
+type AdjacencyRule = [TileIndex, TileIndex, Direction];
 
 // Manages rules for which tiles are allowed to be adjacent to which other tiles, in a given direction.
 class AdjacencyRules {
+  constructor(tiles: Tile[]) {
+    for (let i = 0; i < tiles.length; i++) {
+      for (let j = i; j < tiles.length; j++) {
+        for (let dir of Direction.items) {
+          if (AdjacencyRules._isCompatible(tiles[i], tiles[j], dir)) {
+            this._allowed.push([i, j, dir]);
+            this._allowed.push([j, i, Direction.toOpposite[dir]]);
+          }
+        }
+      }
+    }
+  }
   // Returns true if we can place tile `to` in the direction `dir` from `from`.
   isAllowed(from: TileIndex, to: TileIndex, dir: Direction): boolean {
     return true;
   }
+
+  private static _isCompatible(a: Tile, b: Tile, dir: Direction): boolean {
+    let offset = Direction.toOffset[dir];
+    for (let [ax, ay] of rectRange([config.tileSize, config.tileSize])) {
+      let [bx, by] = [ax - offset[0], ay - offset[1]];
+      if (bx < 0 || by < 0 || bx >= config.tileSize || by >= config.tileSize)
+        continue;  // not an overlapping region, ignore
+      if (a.getPixel([ax, ay]) != b.getPixel([bx, by]))
+        return false;
+    }
+    return true;
+  }
+  private readonly _allowed: AdjacencyRule[] = [];
 }
 
 interface MyImageData extends ImageData {
@@ -97,7 +136,6 @@ interface MyImageData extends ImageData {
 ImageData.prototype["get"] = function([x, y]: Point): Color {
   let r = 4 * (y * this.width + x);
   return (this.data[r] << 24) | (this.data[r+1] << 16) | (this.data[r+2] << 8) | (this.data[r+3]);
-  // return [this.data[r], this.data[r+1], this.data[r+2], this.data[r+3]];
 }
 ImageData.prototype["set"] = function([x, y]: Point, color: Color): void {
   let r = 4 * (y * this.width + x);
@@ -189,12 +227,16 @@ function parseImage(imageData: MyImageData) {
     tiles.push(tile);
     counts.push(count);
   }
-  // let frequencyHints = new FrequencyHints(tiles, counts);
 
-  displayTileset(tiles);
+  let adjacencyRules = new AdjacencyRules(tiles);
+  let frequencyHints = new FrequencyHints(counts);
+
+  console.log(frequencyHints);
+  console.log(adjacencyRules);
+  renderTileset(tiles);
 }
 
-function displayTileset(tiles: Tile[]) {
+function renderTileset(tiles: Tile[]) {
   let across = Math.floor(Math.sqrt(tiles.length));
   let down = Math.ceil(tiles.length / across);
   let imageData = new ImageData((config.tileSize+1)*across - 1, (config.tileSize+1)*down - 1) as MyImageData;
