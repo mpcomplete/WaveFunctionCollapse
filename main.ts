@@ -38,7 +38,10 @@ function initTiles() {
       if (!context) return;
       context.drawImage(img, 0, 0);
       let imageData = context.getImageData(0, 0, img.width, img.height) as MyImageData;
-      parseImage(imageData);
+      let results = parseImage(imageData);
+      let core = new CoreState(...results);
+      core.init();
+      core.render();
     }
   };
 }
@@ -72,6 +75,23 @@ function* rectRange([w, h]: Size) {
 // Helper for flattening a 2d coord to an index (row-major order).
 function pointToIndex([x, y]: Point, width: number): number {
   return x + y*width;
+}
+
+function renderToCanvas(canvasId: string, imageData: ImageData): void {
+  // Blit to an offscreen canvas first, so we can scale it up when drawing it for real.
+  let buffer = new OffscreenCanvas(imageData.width, imageData.height);
+  {
+    let context = buffer.getContext('2d');
+    if (!context) return;
+    context.putImageData(imageData, 0, 0);
+  }
+
+  let canvas = $(canvasId) as HTMLCanvasElement;
+  let context = canvas.getContext('2d');
+  if (!context) return;
+  context.imageSmoothingEnabled = false;
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(buffer, 0, 0, canvas.width, canvas.height);
 }
 
 // Full jquery emulation.
@@ -213,7 +233,7 @@ class TileCountMap extends Map<string, {tile: Tile, count: number}> {
 
 // Pre-processing step. Reads an image and cuts it up into NxN tiles (N=tileSize).
 // Also calculates the rules that are fed into the main algorithm.
-function parseImage(imageData: MyImageData) {
+function parseImage(imageData: MyImageData): [AdjacencyRules, FrequencyHints, TileColorMapping] {
   let tileMap = new TileCountMap();
   for (let p of rectRange([imageData.width, imageData.height])) {
     let tile = Tile.fromImageData(imageData, p);
@@ -240,12 +260,10 @@ function parseImage(imageData: MyImageData) {
 
   let adjacencyRules = new AdjacencyRules(tiles);
   let frequencyHints = new FrequencyHints(counts);
-  let tileColorMapping: TileColorMapping = tiles.map(tile => tile.topLeftPixel());
+  let colorForTile: TileColorMapping = tiles.map(tile => tile.topLeftPixel());
 
-  console.log(frequencyHints);
-  console.log(adjacencyRules);
-  console.log(tileColorMapping);
   renderTileset(tiles);
+  return [adjacencyRules, frequencyHints, colorForTile];
 }
 
 function renderTileset(tiles: Tile[]) {
@@ -261,20 +279,7 @@ function renderTileset(tiles: Tile[]) {
       imageData.set([(config.tileSize+1)*i + x, (config.tileSize+1)*j + y], tiles[tile].getPixel([x,y]));
   }
 
-  // Blit to an offscreen canvas first, so we can scale it up when drawing it for real.
-  let buffer = new OffscreenCanvas(imageData.width, imageData.height);
-  {
-    let context = buffer.getContext('2d');
-    if (!context) return;
-    context.putImageData(imageData, 0, 0);
-  }
-
-  let canvas = $("tileset") as HTMLCanvasElement;
-  let context = canvas.getContext('2d');
-  if (!context) return;
-  context.imageSmoothingEnabled = false;
-  context.clearRect(0, 0, canvas.width, canvas.height);
-  context.drawImage(buffer, 0, 0, canvas.width, canvas.height);
+  renderToCanvas("tileset", imageData);
 }
 
 // Represents the state of a single pixel in the output, mainly which tiles are possible to be placed
@@ -284,7 +289,7 @@ class Cell {
   // All Cells start the same, so we clone them from a template.
   static createTemplate(adjacencyRules: AdjacencyRules, frequencyHints: FrequencyHints): Cell {
     let cell = new Cell;
-    cell._possible = Array(frequencyHints.numTiles).fill(true);
+    cell._possible = new Array(frequencyHints.numTiles).fill(true);
     for (let i = 0; i < frequencyHints.numTiles; i++) {
       let w = frequencyHints.weightForTile(i);
       cell._sumWeight += w;
@@ -304,6 +309,9 @@ class Cell {
   static fromTemplate(template: Cell): Cell {
     let cell = new Cell;
     cell._possible = Array.from(template._possible);
+    // cell._possible = cell._possible.fill(false);
+    // cell._possible[Math.floor(Math.random()*cell._possible.length)] = true;
+    // cell._possible[Math.floor(Math.random()*cell._possible.length)] = true;
     cell._sumWeight = template._sumWeight;
     cell._sumWeightTimesLogWeight = template._sumWeightTimesLogWeight;
     cell._tileEnablerCounts = Array.from(template._tileEnablerCounts, inner => Array.from(inner));
@@ -311,6 +319,13 @@ class Cell {
   }
 
   private constructor() {}
+
+  *possibleTiles() {
+    for (let i = 0; i < this._possible.length; i++) {
+      if (this._possible[i])
+        yield i;
+    }
+  }
 
   // _possible[tileIndex] is true if tileIndex can be placed in this cell, false otherwise.
   private _possible: boolean[] = [];
@@ -324,9 +339,10 @@ class Cell {
 }
 
 class CoreState {
-  constructor(a, f) {
+  constructor(a, f, c) {
     this._adjacencyRules = a;
     this._frequencyHints = f;
+    this._colorForTile = c;
   }
 
   init(): void {
@@ -340,10 +356,32 @@ class CoreState {
     }
   }
 
+  step(): boolean {
+    return false;
+  }
+
+  render(): void {
+    let imageData = new ImageData(config.outputWidth, config.outputHeight) as MyImageData;
+
+    for (let [x,y] of rectRange([config.outputWidth, config.outputHeight])) {
+      let color: Color = 0;
+      let sumWeight = 0;
+      for (let tile of this._grid[y][x].possibleTiles()) {
+        let w = this._frequencyHints.weightForTile(tile);
+        color += this._colorForTile[tile] * w;
+        sumWeight += w;
+      }
+      color = (color / sumWeight) | 0xff; // full alpha
+      imageData.set([x, y], color);
+    }
+
+    renderToCanvas("output", imageData);
+  }
 
   private _grid: Cell[][] = [];
   private _adjacencyRules: AdjacencyRules;
   private _frequencyHints: FrequencyHints;
+  private _colorForTile: TileColorMapping;
   // entropyHeap: Heap;
 }
 
