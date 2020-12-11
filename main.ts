@@ -42,6 +42,8 @@ function initTiles() {
       let core = new CoreState(...results);
       core.init();
       core.render();
+      while (core.step())
+        core.render();
     }
   };
 }
@@ -327,8 +329,31 @@ class Cell {
     }
   }
 
+  chooseTile(frequencyHints: FrequencyHints): TileIndex {
+    let chosenWeight = Math.random() * this._sumWeight;
+    for (let tile of this.possibleTiles()) {
+      chosenWeight -= frequencyHints.weightForTile(tile);
+      if (chosenWeight < 0)
+        return this._chosenTile = tile;
+    }
+    throw new Error("cell weights were invalid");
+  }
+  removeTile(tile: TileIndex, frequencyHints: FrequencyHints | null = null): void {
+    this._possible[tile] = false;
+    if (frequencyHints) {
+      let weight = frequencyHints.weightForTile(tile);
+      this._sumWeight -= weight;
+      this._sumWeightTimesLogWeight -= weight * Math.log2(weight);
+    }
+  }
+
+  get isCollapsed(): boolean { return this._chosenTile != -1; }
+  // entropy = log(W) - sum(w[n]*log(w[n]))/W where W = sum(w[n])
+  get entropy(): number { return Math.log2(this._sumWeight) - this._sumWeightTimesLogWeight / this._sumWeight; }
+
   // _possible[tileIndex] is true if tileIndex can be placed in this cell, false otherwise.
   private _possible: boolean[] = [];
+  private _chosenTile: TileIndex = -1;
   // Cache of sum(w[n]), used in entropy calculations.
   private _sumWeight: FrequencyWeight = 0;
   // Cache of sum(w[n]*log(w[n])), used in entropy calculations.
@@ -354,10 +379,17 @@ class CoreState {
         this._grid[y][x] = Cell.fromTemplate(cellTemplate);
       }
     }
+
+    this._entropyHeap = Array.from(rectRange([config.outputWidth, config.outputHeight]));
   }
 
   step(): boolean {
-    return false;
+    let p = this._chooseCell();
+    if (!p)
+      return false;
+    let removals = this._collapseCell(p);
+    this._propagate(removals);
+    return true;
   }
 
   render(): void {
@@ -378,11 +410,39 @@ class CoreState {
     renderToCanvas("output", imageData);
   }
 
+  private _chooseCell(): Point | null {
+    let [p, entropy, heapIndex]: [Point | null, number, string] = [null, Number.POSITIVE_INFINITY, ""];
+    for (let i in this._entropyHeap) {
+      let [x, y] = this._entropyHeap[i];
+      if (this._grid[y][x].entropy < entropy)
+        [p, entropy, heapIndex] = [[x,y], this._grid[y][x].entropy, i];
+    }
+    if (heapIndex)
+      delete this._entropyHeap[heapIndex];
+    return p;
+  }
+
+  private _collapseCell([x, y]: Point) {
+    let cell = this._grid[y][x];
+    let chosenTile = cell.chooseTile(this._frequencyHints);
+    let removals: RemoveEvent[] = [];
+    for (let tile of cell.possibleTiles()) {
+      if (chosenTile != tile) {
+        cell.removeTile(tile);
+        removals.push({ pos: [x, y], tile: tile });
+      }
+    }
+    return removals;
+  }
+
+  private _propagate(removals: RemoveEvent[]) {
+  }
+
   private _grid: Cell[][] = [];
   private _adjacencyRules: AdjacencyRules;
   private _frequencyHints: FrequencyHints;
   private _colorForTile: TileColorMapping;
-  // entropyHeap: Heap;
+  private _entropyHeap: Point[]; // TODO: use a real heap
 }
 
 type RemoveEvent = {
