@@ -42,8 +42,12 @@ function initTiles() {
       let core = new CoreState(...results);
       core.init();
       core.render();
-      while (core.step())
+      let intervalId = window.setInterval(() => {
+        console.log("Step");
         core.render();
+        if (!core.step())
+          window.clearInterval(intervalId);
+      }, 1000);
     }
   };
 }
@@ -348,8 +352,10 @@ class Cell {
   }
 
   get isCollapsed(): boolean { return this._chosenTile != -1; }
+  get noPossibleTiles(): boolean { return this._sumWeight == 0; }
   // entropy = log(W) - sum(w[n]*log(w[n]))/W where W = sum(w[n])
   get entropy(): number { return Math.log2(this._sumWeight) - this._sumWeightTimesLogWeight / this._sumWeight; }
+  enablerCountsForTile(tile: TileIndex): number[] { return this._tileEnablerCounts[tile]; }
 
   // _possible[tileIndex] is true if tileIndex can be placed in this cell, false otherwise.
   private _possible: boolean[] = [];
@@ -358,8 +364,8 @@ class Cell {
   private _sumWeight: FrequencyWeight = 0;
   // Cache of sum(w[n]*log(w[n])), used in entropy calculations.
   private _sumWeightTimesLogWeight: number = 0;
-   // tileEnablerCounts[tileIndex][dir] = count of tiles that can appear in direction `dir` from this cell if
-   // this cell chooses `tileIndex`.
+   // tileEnablerCounts[tileIndex][dir] = for adjacentCell in direction `dir` from this cell, this is the count
+   // of possible tiles in adjacentCell that are compatible with `tileIndex` in this cell. Used in propagation.
   private _tileEnablerCounts: number[][] = [];
 }
 
@@ -388,8 +394,7 @@ class CoreState {
     if (!p)
       return false;
     let removals = this._collapseCell(p);
-    this._propagate(removals);
-    return true;
+    return this._propagate(removals);
   }
 
   render(): void {
@@ -422,7 +427,7 @@ class CoreState {
     return p;
   }
 
-  private _collapseCell([x, y]: Point) {
+  private _collapseCell([x, y]: Point): RemoveEvent[] {
     let cell = this._grid[y][x];
     let chosenTile = cell.chooseTile(this._frequencyHints);
     let removals: RemoveEvent[] = [];
@@ -435,7 +440,38 @@ class CoreState {
     return removals;
   }
 
-  private _propagate(removals: RemoveEvent[]) {
+  private _propagate(removals: RemoveEvent[]): boolean {
+    while (removals.length > 0) {
+      let { pos: [rx, ry], tile: removedTile } = removals.shift() as RemoveEvent;
+      let removedCell = this._grid[ry][rx];
+      for (let dir of Direction.items) {
+        let offset = Direction.toOffset[dir];
+        let oppositeDir = Direction.toOpposite[dir];
+        let [ax, ay] = [rx + offset[0], ry + offset[1]];
+        if (!(ax >= 0 && ay >= 0 && ax < config.outputWidth && ay < config.outputHeight))
+          continue;  // out of bounds
+        let adjacentCell = this._grid[ay][ax];
+        for (let enabledTile of this._adjacencyRules.allowedTiles(removedTile, dir)) {
+          // For every tile that was enabled by the removed tile, decrement its enabler count.
+          // If a count reaches zero, that tile is impossible, so remove it.
+          let enablerCounts = adjacentCell.enablerCountsForTile(removedTile);
+          let wasZero = enablerCounts.some(count => count == 0);
+          let isZero = --enablerCounts[oppositeDir] == 0;
+
+          // Only remove the tile if this is the first direction to reach 0 enablers (otherwise
+          // we've already removed it).
+          if (isZero && !wasZero) {
+            adjacentCell.removeTile(enabledTile, this._frequencyHints);
+            if (adjacentCell.noPossibleTiles) {
+              console.error("Oops. Contradiction!");
+              return false;
+            }
+            removals.push({pos: [ax, ay], tile: enabledTile});
+          }
+        }
+      }
+    }
+    return true;
   }
 
   private _grid: Cell[][] = [];
