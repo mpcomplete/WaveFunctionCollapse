@@ -106,20 +106,13 @@ type TileColorMapping = Color[];
 class FrequencyHints {
   constructor(counts: number[]) {
     this._tileWeights = counts;
-    for (let i = 0; i < counts.length; i++) {
-      this._sumWeight += counts[i];
-      this._sumWeightTimesLogWeight += counts[i] * Math.log2(counts[i]);
-    }
   }
   // w[n] - the relative frequency of the given tile. This is simply the number of
   // times it appears in the source image.
   weightForTile(index: TileIndex): FrequencyWeight {
     return this._tileWeights[index];
   }
-  // Cache of sum(w[n]), used in entropy calculations.
-  get sumWeight() { return this._sumWeight; }
-  // Cache of sum(w[n]*log(w[n])), used in entropy calculations.
-  get sumWeightTimesLogWeight() { return this._sumWeightTimesLogWeight; }
+  get numTiles() { return this._tileWeights.length; }
 
   private readonly _tileWeights: FrequencyWeight[] = [];
   private readonly _sumWeight: FrequencyWeight = 0;
@@ -138,6 +131,7 @@ class AdjacencyRules {
       }
     }
   }
+  get numTiles() { return this._allowed.length; }
   // Returns true if we can place tile `to` in the direction `dir` from `from`.
   isAllowed(from: TileIndex, to: TileIndex, dir: Direction): boolean {
     return true;
@@ -165,9 +159,12 @@ class AdjacencyRules {
     this._allowed[from][dir].push(to);
   }
 
-  private readonly _allowed: Array<Array<Array<TileIndex>>> = [];
+  private readonly _allowed: TileIndex[][][] = []; // _allowed[from][dir] = [tileIndices...]
 }
 
+// Pixel data for a Tile. Only used during pre-processing. During the actual algorithm,
+// we refer to tiles by index. The AdjacencyRules and FrequencyHints govern how we
+// can place tiles in the grid, and the TileColorMapping tells us what color to use.
 class Tile {
   topLeftPixel(): Color { return this._pixels[0]; }
   getPixel([x, y]: Point): Color { return this._pixels[x + y * config.tileSize]; }
@@ -214,6 +211,8 @@ class TileCountMap extends Map<string, {tile: Tile, count: number}> {
   }
 }
 
+// Pre-processing step. Reads an image and cuts it up into NxN tiles (N=tileSize).
+// Also calculates the rules that are fed into the main algorithm.
 function parseImage(imageData: MyImageData) {
   let tileMap = new TileCountMap();
   for (let p of rectRange([imageData.width, imageData.height])) {
@@ -241,9 +240,11 @@ function parseImage(imageData: MyImageData) {
 
   let adjacencyRules = new AdjacencyRules(tiles);
   let frequencyHints = new FrequencyHints(counts);
+  let tileColorMapping: TileColorMapping = tiles.map(tile => tile.topLeftPixel());
 
   console.log(frequencyHints);
   console.log(adjacencyRules);
+  console.log(tileColorMapping);
   renderTileset(tiles);
 }
 
@@ -275,3 +276,78 @@ function renderTileset(tiles: Tile[]) {
   context.clearRect(0, 0, canvas.width, canvas.height);
   context.drawImage(buffer, 0, 0, canvas.width, canvas.height);
 }
+
+// Represents the state of a single pixel in the output, mainly which tiles are possible to be placed
+// in this cell. Possible tiles are eliminated as the algorithm proceeds, until all cells are "collapsed"
+// (e.g. they have a single possible tile).
+class Cell {
+  // All Cells start the same, so we clone them from a template.
+  static createTemplate(adjacencyRules: AdjacencyRules, frequencyHints: FrequencyHints): Cell {
+    let cell = new Cell;
+    cell._possible = Array(frequencyHints.numTiles).fill(true);
+    for (let i = 0; i < frequencyHints.numTiles; i++) {
+      let w = frequencyHints.weightForTile(i);
+      cell._sumWeight += w;
+      cell._sumWeightTimesLogWeight += w * Math.log2(w);
+    }
+    for (let i = 0; i < adjacencyRules.numTiles; i++) {
+      cell._tileEnablerCounts[i] = [0, 0, 0, 0]; // 4 directions
+      for (let dir of Direction.items) {
+        for (let j of adjacencyRules.allowedTiles(i, dir)) {
+          cell._tileEnablerCounts[i][dir]++;
+        }
+      }
+    }
+    return cell;
+  }
+  // Returns a deep copy of the template.
+  static fromTemplate(template: Cell): Cell {
+    let cell = new Cell;
+    cell._possible = Array.from(template._possible);
+    cell._sumWeight = template._sumWeight;
+    cell._sumWeightTimesLogWeight = template._sumWeightTimesLogWeight;
+    cell._tileEnablerCounts = Array.from(template._tileEnablerCounts, inner => Array.from(inner));
+    return cell;
+  }
+
+  private constructor() {}
+
+  // _possible[tileIndex] is true if tileIndex can be placed in this cell, false otherwise.
+  private _possible: boolean[] = [];
+  // Cache of sum(w[n]), used in entropy calculations.
+  private _sumWeight: FrequencyWeight = 0;
+  // Cache of sum(w[n]*log(w[n])), used in entropy calculations.
+  private _sumWeightTimesLogWeight: number = 0;
+   // tileEnablerCounts[tileIndex][dir] = count of tiles that can appear in direction `dir` from this cell if
+   // this cell chooses `tileIndex`.
+  private _tileEnablerCounts: number[][] = [];
+}
+
+class CoreState {
+  constructor(a, f) {
+    this._adjacencyRules = a;
+    this._frequencyHints = f;
+  }
+
+  init(): void {
+    let cellTemplate = Cell.createTemplate(this._adjacencyRules, this._frequencyHints);
+
+    for (let y = 0; y < config.outputHeight; y++) {
+      this._grid[y] = [];
+      for (let x = 0; x < config.outputWidth; x++) {
+        this._grid[y][x] = Cell.fromTemplate(cellTemplate);
+      }
+    }
+  }
+
+
+  private _grid: Cell[][] = [];
+  private _adjacencyRules: AdjacencyRules;
+  private _frequencyHints: FrequencyHints;
+  // entropyHeap: Heap;
+}
+
+type RemoveEvent = {
+  pos: Point;
+  tile: TileIndex;
+};
