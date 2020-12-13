@@ -42,12 +42,15 @@ function initTiles() {
       let core = new CoreState(...results);
       core.init();
       core.render();
+      // window.onclick = () => {
+      //   core.step();
+      //   core.render();
+      // };
       let intervalId = window.setInterval(() => {
-        console.log("Step");
-        core.render();
         if (!core.step())
           window.clearInterval(intervalId);
-      }, 1000);
+        core.render();
+      }, 0);
     }
   };
 }
@@ -165,7 +168,9 @@ class AdjacencyRules {
   // Returns an iterator of all the tiles which can be placed one space in direction `dir`
   // from tile `from`.
   *allowedTiles(from: TileIndex, dir: Direction) {
-    yield from;
+    let allowed = this._allowed[from][dir];
+    for (let tile of allowed)
+      yield tile;
   }
 
   private static _isCompatible(a: Tile, b: Tile, dir: Direction): boolean {
@@ -334,6 +339,8 @@ class Cell {
   }
 
   chooseTile(frequencyHints: FrequencyHints): TileIndex {
+    // return this._chosenTile = 12;
+
     let chosenWeight = Math.random() * this._sumWeight;
     for (let tile of this.possibleTiles()) {
       chosenWeight -= frequencyHints.weightForTile(tile);
@@ -378,7 +385,6 @@ class CoreState {
 
   init(): void {
     let cellTemplate = Cell.createTemplate(this._adjacencyRules, this._frequencyHints);
-
     for (let y = 0; y < config.outputHeight; y++) {
       this._grid[y] = [];
       for (let x = 0; x < config.outputWidth; x++) {
@@ -443,7 +449,6 @@ class CoreState {
   private _propagate(removals: RemoveEvent[]): boolean {
     while (removals.length > 0) {
       let { pos: [rx, ry], tile: removedTile } = removals.shift() as RemoveEvent;
-      let removedCell = this._grid[ry][rx];
       for (let dir of Direction.items) {
         let offset = Direction.toOffset[dir];
         let oppositeDir = Direction.toOpposite[dir];
@@ -451,11 +456,13 @@ class CoreState {
         if (!(ax >= 0 && ay >= 0 && ax < config.outputWidth && ay < config.outputHeight))
           continue;  // out of bounds
         let adjacentCell = this._grid[ay][ax];
+        if (adjacentCell.isCollapsed)
+          continue;
         for (let enabledTile of this._adjacencyRules.allowedTiles(removedTile, dir)) {
           // For every tile that was enabled by the removed tile, decrement its enabler count.
           // If a count reaches zero, that tile is impossible, so remove it.
-          let enablerCounts = adjacentCell.enablerCountsForTile(removedTile);
-          let wasZero = enablerCounts.some(count => count == 0);
+          let enablerCounts = adjacentCell.enablerCountsForTile(enabledTile);
+          let wasZero = enablerCounts.some(count => count <= 0);
           let isZero = --enablerCounts[oppositeDir] == 0;
 
           // Only remove the tile if this is the first direction to reach 0 enablers (otherwise
@@ -463,7 +470,7 @@ class CoreState {
           if (isZero && !wasZero) {
             adjacentCell.removeTile(enabledTile, this._frequencyHints);
             if (adjacentCell.noPossibleTiles) {
-              console.error("Oops. Contradiction!");
+              console.error(`Contradiction at cell ${ax},${ay}. Removed ${enabledTile} after ${removedTile} was removed in cell ${rx},${ry}.`);
               return false;
             }
             removals.push({pos: [ax, ay], tile: enabledTile});
