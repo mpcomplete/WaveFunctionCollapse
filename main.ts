@@ -1,25 +1,41 @@
 import * as Dat from "dat.gui";
 
-let config:any = {tmp:3};
+let config:any = {};
 window.onload = function() {
   var gui = new Dat.GUI();
   const readableName = (n: string) => n.replace(/([A-Z])/g, ' $1').toLowerCase()
-  function addConfig(name: string, initial: any, min?: number, max?: number) {
+  function addConfig(name: string, initial: any, min?: any, max?: number) {
     config[name] = initial;
     return gui.add(config, name, min, max).name(readableName(name));
   }
   addConfig("includeRotatedAndFlipped", false).onFinishChange(initTiles);
   addConfig("tileSize", 3, 2, 10).step(1).onFinishChange(initTiles);
-  addConfig("outputWidth", 20, 5, 1000).step(5);
-  addConfig("outputHeight", 20, 5, 1000).step(5);
+  addConfig("outputWidth", 50, 5, 1000).step(5).onFinishChange(initTiles);
+  addConfig("outputHeight", 50, 5, 1000).step(5).onFinishChange(initTiles);
+  addConfig("input", "tiles/Water.png", [
+    "tiles/3Bricks.png", "tiles/Angular.png", "tiles/Cat.png", "tiles/Cats.png", "tiles/Cave.png", "tiles/Chess.png",
+    "tiles/City.png", "tiles/ColoredCity.png", "tiles/Dungeon.png", "tiles/Fabric.png", "tiles/Flowers.png", "tiles/Forest.png",
+    "tiles/Grid.png", "tiles/GridLong.png", "tiles/Hogs.png", "tiles/Knot.png", "tiles/Lake.png", "tiles/LessRooms.png", "tiles/Link.png",
+    "tiles/Link2.png", "tiles/MagicOffice.png", "tiles/Maze.png", "tiles/Mazelike.png", "tiles/MoreFlowers.png", "tiles/Mountains.png",
+    "tiles/Nested.png", "tiles/Office.png", "tiles/Office2.png", "tiles/Paths.png", "tiles/Platformer.png", "tiles/Qud.png", "tiles/RedDot.png",
+    "tiles/RedMaze.png", "tiles/Rooms.png", "tiles/Rule126.png", "tiles/ScaledMaze.png", "tiles/Sewers.png", "tiles/SimpleKnot.png",
+    "tiles/SimpleMaze.png", "tiles/SimpleWall.png", "tiles/Skew1.png", "tiles/Skew2.png", "tiles/Skyline.png", "tiles/Skyline2.png",
+    "tiles/SmileCity.png", "tiles/Spirals.png", "tiles/Town.png", "tiles/TrickKnot.png", "tiles/Village.png", "tiles/Wall.png", "tiles/Water.png",
+  ]).onFinishChange(initTiles);
+
+  gui.useLocalStorage = true;
 
   initTiles();
 };
 
+let intervalId: number;
 function initTiles() {
   let img = new Image();
   img.crossOrigin = 'anonymous';
-  img.src = "tiles.png";
+  img.src = config.input;
+
+  if (intervalId)
+    window.clearInterval(intervalId);
 
   img.onload = function() {
     // Update the input tile display.
@@ -42,11 +58,10 @@ function initTiles() {
       let core = new CoreState(...results);
       core.init();
       core.render();
-      // window.onclick = () => {
-      //   core.step();
-      //   core.render();
-      // };
-      let intervalId = window.setInterval(() => {
+      let paused = true;
+      window.onclick = () => {paused = !paused; };
+      intervalId = window.setInterval(() => {
+        if (paused) return;
         if (!core.step())
           window.clearInterval(intervalId);
         core.render();
