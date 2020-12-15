@@ -1,4 +1,5 @@
 import * as Dat from "dat.gui";
+import Heap from 'heap-js';
 
 let config:any = {};
 window.onload = function() {
@@ -399,15 +400,15 @@ class CoreState {
   }
 
   init(): void {
+    this._entropyHeap = new Heap((a, b) => a.entropy - b.entropy);
     let cellTemplate = Cell.createTemplate(this._adjacencyRules, this._frequencyHints);
     for (let y = 0; y < config.outputHeight; y++) {
       this._grid[y] = [];
       for (let x = 0; x < config.outputWidth; x++) {
         this._grid[y][x] = Cell.fromTemplate(cellTemplate);
+        this._entropyHeap.add({pos: [x, y], entropy: this._grid[y][x].entropy});
       }
     }
-
-    this._entropyHeap = Array.from(rectRange([config.outputWidth, config.outputHeight]));
   }
 
   step(): boolean {
@@ -437,15 +438,13 @@ class CoreState {
   }
 
   private _chooseCell(): Point | null {
-    let [p, entropy, heapIndex]: [Point | null, number, string] = [null, Number.POSITIVE_INFINITY, ""];
-    for (let i in this._entropyHeap) {
-      let [x, y] = this._entropyHeap[i];
-      if (this._grid[y][x].entropy < entropy)
-        [p, entropy, heapIndex] = [[x,y], this._grid[y][x].entropy, i];
+    let cell: HeapCell | undefined;
+    while (cell = this._entropyHeap.pop()) {
+      let [x,y] = cell.pos;
+      if (!this._grid[y][x].isCollapsed)
+        return cell.pos;
     }
-    if (heapIndex)
-      delete this._entropyHeap[heapIndex];
-    return p;
+    return null;
   }
 
   private _collapseCell([x, y]: Point): RemoveEvent[] {
@@ -489,6 +488,7 @@ class CoreState {
               return false;
             }
             removals.push({pos: [ax, ay], tile: enabledTile});
+            this._entropyHeap.push({pos: [ax, ay], entropy: adjacentCell.entropy});
           }
         }
       }
@@ -500,8 +500,13 @@ class CoreState {
   private _adjacencyRules: AdjacencyRules;
   private _frequencyHints: FrequencyHints;
   private _colorForTile: TileColorMapping;
-  private _entropyHeap: Point[]; // TODO: use a real heap
+  private _entropyHeap: Heap<HeapCell>;
 }
+
+type HeapCell = {
+  pos: Point;
+  entropy: number;
+};
 
 type RemoveEvent = {
   pos: Point;
