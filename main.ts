@@ -102,6 +102,7 @@ function pointToIndex([x, y]: Point, width: number): number {
   return x + y*width;
 }
 
+// Helper to draw an ImageData to a canvas, scaled to that canvas's size.
 function renderToCanvas(canvasId: string, imageData: ImageData): void {
   // Blit to an offscreen canvas first, so we can scale it up when drawing it for real.
   let buffer = new OffscreenCanvas(imageData.width, imageData.height);
@@ -189,6 +190,7 @@ class AdjacencyRules {
       yield tile;
   }
 
+  // Returns true if tile we can place tile `b` in the direction `dir` from `a`.
   private static _isCompatible(a: Tile, b: Tile, dir: Direction): boolean {
     let offset = Direction.toOffset[dir];
     for (let [ax, ay] of rectRange([config.tileSize, config.tileSize])) {
@@ -200,6 +202,7 @@ class AdjacencyRules {
     }
     return true;
   }
+  // Adds a new rule to the ruleset.
   private _allow(from: TileIndex, to: TileIndex, dir: Direction): void {
     if (!this._allowed[from]) this._allowed[from] = [];
     if (!this._allowed[from][dir]) this._allowed[from][dir] = [];
@@ -215,6 +218,9 @@ class AdjacencyRules {
 class Tile {
   topLeftPixel(): Color { return this._pixels[0]; }
   getPixel([x, y]: Point): Color { return this._pixels[x + y * config.tileSize]; }
+
+  // Map does not provide a way to provide our own hash or equality functions,
+  // so we generate our own key based on the tile's pixel data.
   get mapKey(): string {
     if (!this._mapKey)
       this._mapKey = this._pixels.join(",");
@@ -249,6 +255,7 @@ class Tile {
   private _mapKey: string;
 }
 
+// Maps Tile to appearance count for that tile.
 class TileCountMap extends Map<string, {tile: Tile, count: number}> {
   addTile(tile: Tile): number {
     let value = this.get(tile.mapKey) || {tile: tile, count: 0};
@@ -293,6 +300,7 @@ function parseImage(imageData: MyImageData): [AdjacencyRules, FrequencyHints, Ti
   return [adjacencyRules, frequencyHints, colorForTile];
 }
 
+// Draws the tileset to the canvas.
 function renderTileset(tiles: Tile[]) {
   let across = Math.floor(Math.sqrt(tiles.length));
   let down = Math.ceil(tiles.length / across);
@@ -336,9 +344,6 @@ class Cell {
   static fromTemplate(template: Cell): Cell {
     let cell = new Cell;
     cell._possible = Array.from(template._possible);
-    // cell._possible = cell._possible.fill(false);
-    // cell._possible[Math.floor(Math.random()*cell._possible.length)] = true;
-    // cell._possible[Math.floor(Math.random()*cell._possible.length)] = true;
     cell._sumWeight = template._sumWeight;
     cell._sumWeightTimesLogWeight = template._sumWeightTimesLogWeight;
     cell._tileEnablerCounts = Array.from(template._tileEnablerCounts, inner => Array.from(inner));
@@ -347,6 +352,7 @@ class Cell {
 
   private constructor() {}
 
+  // Returns an iterator of all the tiles that can be placed in this Cell.
   *possibleTiles() {
     for (let i = 0; i < this._possible.length; i++) {
       if (this._possible[i])
@@ -354,9 +360,9 @@ class Cell {
     }
   }
 
+  // Picks a tile at random from the remaining possible tiles, with higher
+  // frequency tiles being more likely to be picked.
   chooseTile(frequencyHints: FrequencyHints): TileIndex {
-    // return this._chosenTile = 12;
-
     let chosenWeight = Math.random() * this._sumWeight;
     for (let tile of this.possibleTiles()) {
       chosenWeight -= frequencyHints.weightForTile(tile);
@@ -365,6 +371,8 @@ class Cell {
     }
     throw new Error("cell weights were invalid");
   }
+
+  // Removes a tile from the list of possible tiles.
   removeTile(tile: TileIndex, frequencyHints: FrequencyHints | null = null): void {
     this._possible[tile] = false;
     if (frequencyHints) {
@@ -374,7 +382,11 @@ class Cell {
     }
   }
 
+  // Returns true if we've locked in a choice for this tile (e.g. chooseTile was called).
   get isCollapsed(): boolean { return this._chosenTile != -1; }
+
+  // Returns true of there are no possible tiles remaining to choose. This signals
+  // a contradiction was reached.
   get noPossibleTiles(): boolean { return this._sumWeight == 0; }
   // entropy = log(W) - sum(w[n]*log(w[n]))/W where W = sum(w[n])
   get entropy(): number { return Math.log2(this._sumWeight) - this._sumWeightTimesLogWeight / this._sumWeight; }
@@ -399,6 +411,7 @@ class CoreState {
     this._colorForTile = c;
   }
 
+  // Initalizes the grid, etc.
   init(): void {
     this._entropyHeap = new Heap((a, b) => a.entropy - b.entropy);
     let cellTemplate = Cell.createTemplate(this._adjacencyRules, this._frequencyHints);
@@ -411,6 +424,11 @@ class CoreState {
     }
   }
 
+  // Handles a single step of the WFC algorithm:
+  // 1. Pick the cell with minimum entropy.
+  // 2. Choose a tile at random for that cell and eliminate all other options.
+  // 3. Propagate the consequences, recursively.
+  // Returns true if there is more work to do, false if we're done.
   step(): boolean {
     let p = this._chooseCell();
     if (!p)
@@ -419,6 +437,9 @@ class CoreState {
     return this._propagate(removals);
   }
 
+  // Draws the current state of the generated image to our output canvas.
+  // For collapsed cells, use the top-left pixel value of the tile that was chosen for that cell.
+  // For uncollapsed cells, use a weighted average of that cell's possible tiles.
   render(): void {
     let imageData = new ImageData(config.outputWidth, config.outputHeight) as MyImageData;
 
@@ -437,6 +458,7 @@ class CoreState {
     renderToCanvas("output", imageData);
   }
 
+  // Returns the lowest-entropy cell, or null if all cells have been collapsed.
   private _chooseCell(): Point | null {
     let cell: HeapCell | undefined;
     while (cell = this._entropyHeap.pop()) {
@@ -447,6 +469,8 @@ class CoreState {
     return null;
   }
 
+  // Chooses a tile for the given cell, and return a list representing the removal of
+  // the unchosen tiles.
   private _collapseCell([x, y]: Point): RemoveEvent[] {
     let cell = this._grid[y][x];
     let chosenTile = cell.chooseTile(this._frequencyHints);
@@ -460,6 +484,10 @@ class CoreState {
     return removals;
   }
 
+  // Propagates the consequences of removing tiles from a cell's possible list.
+  // This involves possibly removing other tiles from adjacent cells when they are
+  // incompatible with the remaining tiles around them. Those removals are then
+  // propagated in turn, until the grid reaches a steady state.
   private _propagate(removals: RemoveEvent[]): boolean {
     while (removals.length > 0) {
       let { pos: [rx, ry], tile: removedTile } = removals.shift() as RemoveEvent;
